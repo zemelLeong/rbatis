@@ -67,6 +67,7 @@ impl Debug for ValueMap {
     }
 }
 
+#[cfg(feature = "escape_json")]
 fn escape_json_string(input: &str) -> String {
     let mut escaped_string = String::new();
 
@@ -93,6 +94,7 @@ impl Display for ValueMap {
         for (k, v) in &self.0 {
             Display::fmt(k, f)?;
             f.write_str(":")?;
+            #[cfg(feature = "escape_json")]
             let v = match v {
                 Value::String(v) => &Value::String(escape_json_string(v)),
                 _ => v
