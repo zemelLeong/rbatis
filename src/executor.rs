@@ -187,7 +187,11 @@ impl RBatisConnExecutor {
         Box::pin(async move {
             let mut conn = self.conn.into_inner();
             conn.begin().await?;
-            Ok(RBatisTxExecutor::new(self.rb.task_id_generator.generate(), self.rb, conn))
+            Ok(RBatisTxExecutor::new(
+                self.rb.task_id_generator.generate(),
+                self.rb,
+                conn,
+            ))
         })
     }
 
@@ -458,7 +462,7 @@ impl RBatisTxExecutor {
     /// ```
     pub fn defer_async<F>(self, callback: fn(s: RBatisTxExecutor) -> F) -> RBatisTxExecutorGuard
     where
-        F: Future<Output=()> + Send + 'static,
+        F: Future<Output = ()> + Send + 'static,
     {
         RBatisTxExecutorGuard {
             tx: Some(self),
