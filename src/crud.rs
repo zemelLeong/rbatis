@@ -444,14 +444,6 @@ macro_rules! impl_delete {
 ///        `order by create_time desc`"});
 /// ```
 ///
-/// limit_sql: If the database does not support the statement `limit ${page_no},${page_size}`,You should add param 'limit_sql:&str'
-/// ```rust
-/// #[derive(serde::Serialize, serde::Deserialize)]
-/// pub struct MockTable{}
-/// rbatis::impl_select_page!(MockTable{select_page(limit_sql:&str) =>"
-///      if do_count == false:
-///        `order by create_time desc`"});
-/// ```
 /// you can see ${page_no} = (page_no -1) * page_size;
 /// you can see ${page_size} = page_size;
 #[macro_export]
@@ -477,56 +469,13 @@ macro_rules! impl_select_page {
                 if table_name.is_empty(){
                     table_name = snake_name();
                 }
-                //pg,mssql can override this parameter to implement its own limit statement
-                let mut limit_sql = " limit ${page_no},${page_size}".to_string();
-                limit_sql=limit_sql.replace("${page_no}", &page_request.offset().to_string());
-                limit_sql=limit_sql.replace("${page_size}", &page_request.page_size().to_string());
-                let records:Vec<$table>;
-                struct Inner{}
-                impl Inner{
-                 #[$crate::py_sql(
-                    "`select `
-                    if do_count == false:
-                      `${table_column}`
-                    if do_count == true:
-                       `count(1) as count`
-                    ` from ${table_name} `\n",$where_sql,"\n
-                    if do_count == false:
-                        `${limit_sql}`")]
-                   async fn $fn_name(executor: &dyn $crate::executor::Executor,
-                                     do_count:bool,
+                $crate::pysql_select_page!($fn_name(
                                      table_column:&str,
                                      table_name: &str,
-                                     page_no:u64,
-                                     page_size:u64,
-                                     page_offset:u64,
-                                     limit_sql:&str,
-                 $($param_key:&$param_type,)*) -> std::result::Result<rbs::Value, $crate::rbdc::Error> {impled!()}
-                }
-                let mut total = 0;
-                if page_request.do_count() {
-                    let total_value = Inner::$fn_name(executor,
-                                                      true,
-                                                      &table_column,
-                                                      &table_name,
-                                                      page_request.page_no(),
-                                                      page_request.page_size(),
-                                                      page_request.offset(),
-                                                      "",
-                                                      $(&$param_key,)*).await?;
-                    total = $crate::decode(total_value).unwrap_or(0);
-                }
-                let mut page = $crate::plugin::Page::<$table>::new(page_request.page_no(), page_request.page_size(), total,vec![]);
-                let records_value = Inner::$fn_name(executor,
-                                                    false,
-                                                    &table_column,
-                                                    &table_name,
-                                                    page_request.page_no(),
-                                                    page_request.page_size(),
-                                                    page_request.offset(),
-                                                    &limit_sql,
-                                                    $(&$param_key,)*).await?;
-                page.records = rbs::from_value(records_value)?;
+                                     $($param_key:&$param_type,)*) -> $table => 
+               "`select ${table_column} from ${table_name} `\n",$where_sql);
+               
+                let page = $fn_name(executor,page_request,&table_column,&table_name,$(&$param_key,)*).await?;
                 Ok(page)
             }
         }
@@ -563,41 +512,50 @@ macro_rules! impl_select_page {
 /// //rbatis::htmlsql_select_page!(select_page_data(name: &str) -> MockTable => "example.html");
 /// rbatis::htmlsql_select_page!(select_page_data(name: &str) -> MockTable => r#"
 /// <select id="select_page_data">
-///  <if test="do_count == true">
-///   `select count(1) from table `
-///  </if>
-///  <if test="do_count == false">
-///   `select * from table `
-///  </if>
-/// ` where id > 1 `
-///  <if test="do_count == false">
-///  ` limit ${page_no},${page_size} `
-///  </if>
+///  `select * from table  where id > 1  limit ${page_no},${page_size} `
 /// </select>"#);
+///
+/// rbatis::pysql_select_page!(pysql_select_page(name:&str) -> MockTable =>
+///     r#"`select * from activity where delete_flag = 0`
+///         if name != '':
+///            ` and name=#{name}`
+///       ` limit ${page_no},${page_size}`
+/// "#);
 /// ```
 #[macro_export]
 macro_rules! htmlsql_select_page {
-    ($fn_name:ident($($param_key:ident:$param_type:ty$(,)?)*) -> $table:ty => $html_file:expr) => {
+    ($fn_name:ident($($param_key:ident:$param_type:ty$(,)?)*) -> $table:ty => $($html_file:expr$(,)?)*) => {
             pub async fn $fn_name(executor: &dyn $crate::executor::Executor, page_request: &dyn $crate::plugin::IPageRequest, $($param_key:$param_type,)*) -> std::result::Result<$crate::plugin::Page<$table>, $crate::rbdc::Error> {
-            struct Inner{}
-            impl Inner{
-              pub async fn fn_name(executor: &dyn $crate::executor::Executor,do_count:bool,page_no:u64,page_size:u64,$($param_key: &$param_type,)*) -> std::result::Result<rbs::Value, $crate::rbdc::Error>{
-                 #[$crate::html_sql($html_file)]
-                 pub async fn $fn_name(executor: &dyn $crate::executor::Executor,do_count:bool,page_no:u64,page_size:u64,$($param_key: &$param_type,)*) -> std::result::Result<rbs::Value, $crate::rbdc::Error>{
-                    $crate::impled!()
-                 }
-                 $fn_name(executor, do_count, page_no, page_size, $(&$param_key,)*).await
-              }
-            }
-            let mut total = 0;
-            if page_request.do_count() {
-               let total_value = Inner::fn_name(executor, true, page_request.offset(), page_request.page_size(), $(&$param_key,)*).await?;
-               total = $crate::decode(total_value).unwrap_or(0);
-            }
-            let mut page = $crate::plugin::Page::<$table>::new(page_request.page_no(), page_request.page_size(), total,vec![]);
-            let records_value = Inner::fn_name(executor, false, page_request.offset(), page_request.page_size(), $(&$param_key,)*).await?;
-            page.records = rbs::from_value(records_value)?;
-            Ok(page)
+             #[$crate::html_sql($($html_file,)*)]
+             pub async fn $fn_name(executor: &dyn $crate::executor::Executor,do_count:bool,page_no:u64,page_size:u64,$($param_key: &$param_type,)*) -> std::result::Result<rbs::Value, $crate::rbdc::Error>{
+                 $crate::impled!()
+             }
+              let mut executor = executor;
+              let mut conn = None;
+              if executor.name().eq($crate::executor::Executor::name(executor.rb_ref())){
+                  conn = Some(executor.rb_ref().acquire().await?);
+                  match &conn {
+                      Some(c) => {
+                          executor = c;
+                      }
+                      None => {}
+                  }
+             }
+             let mut total = 0;
+             if page_request.do_count() {
+                if let Some(intercept) = executor.rb_ref().get_intercept::<$crate::plugin::intercept_page::PageIntercept>(){
+                    intercept.count_ids.insert(executor.id(),$crate::plugin::PageRequest::new(page_request.page_no(), page_request.page_size()));
+                }
+                let total_value = $fn_name(executor, true, page_request.offset(), page_request.page_size(), $(&$param_key,)*).await?;
+                total = $crate::decode(total_value).unwrap_or(0);
+             }
+             if let Some(intercept) = executor.rb_ref().get_intercept::<$crate::plugin::intercept_page::PageIntercept>(){
+                intercept.select_ids.insert(executor.id(),$crate::plugin::PageRequest::new(page_request.page_no(), page_request.page_size()));
+             }
+             let mut page = $crate::plugin::Page::<$table>::new(page_request.page_no(), page_request.page_size(), total,vec![]);
+             let records_value = $fn_name(executor, false, page_request.offset(), page_request.page_size(), $(&$param_key,)*).await?;
+             page.records = rbs::from_value(records_value)?;
+             Ok(page)
          }
     }
 }
@@ -627,12 +585,7 @@ macro_rules! htmlsql_select_page {
 /// #[derive(serde::Serialize, serde::Deserialize)]
 /// pub struct MockTable{}
 /// rbatis::pysql_select_page!(pysql_select_page(name:&str) -> MockTable =>
-///     r#"`select `
-///       if do_count == true:
-///         ` count(1) as count `
-///       if do_count == false:
-///          ` * `
-///       `from activity where delete_flag = 0`
+///     r#"`select * from activity where delete_flag = 0`
 ///         if name != '':
 ///            ` and name=#{name}`
 ///       ` limit ${page_no},${page_size}`
@@ -640,24 +593,38 @@ macro_rules! htmlsql_select_page {
 /// ```
 #[macro_export]
 macro_rules! pysql_select_page {
-    ($fn_name:ident($($param_key:ident:$param_type:ty$(,)?)*) -> $table:ty => $py_file:expr) => {
+    ($fn_name:ident($($param_key:ident:$param_type:ty$(,)?)*) -> $table:ty => $($py_file:expr$(,)?)*) => {
             pub async fn $fn_name(executor: &dyn $crate::executor::Executor, page_request: &dyn $crate::plugin::IPageRequest, $($param_key:$param_type,)*) -> std::result::Result<$crate::plugin::Page<$table>, $crate::rbdc::Error> {
-            struct Inner{}
-            impl Inner{
-              #[$crate::py_sql($py_file)]
+              #[$crate::py_sql($($py_file,)*)]
               pub async fn $fn_name(executor: &dyn $crate::executor::Executor,do_count:bool,page_no:u64,page_size:u64,$($param_key: &$param_type,)*) -> std::result::Result<rbs::Value, $crate::rbdc::Error>{
                  $crate::impled!()
               }
-            }
-            let mut total = 0;
-            if page_request.do_count() {
-               let total_value = Inner::$fn_name(executor, true, page_request.offset(), page_request.page_size(), $(&$param_key,)*).await?;
-               total = $crate::decode(total_value).unwrap_or(0);
-            }
-            let mut page = $crate::plugin::Page::<$table>::new(page_request.page_no(), page_request.page_size(), total,vec![]);
-            let records_value = Inner::$fn_name(executor, false, page_request.offset(), page_request.page_size(), $(&$param_key,)*).await?;
-            page.records = rbs::from_value(records_value)?;
-            Ok(page)
+              let mut executor = executor;
+              let mut conn = None;
+              if executor.name().eq($crate::executor::Executor::name(executor.rb_ref())){
+                  conn = Some(executor.rb_ref().acquire().await?);
+                  match &conn {
+                      Some(c) => {
+                          executor = c;
+                      }
+                      None => {}
+                  }
+              }
+              let mut total = 0;
+              if page_request.do_count() {
+                 if let Some(intercept) = executor.rb_ref().get_intercept::<$crate::plugin::intercept_page::PageIntercept>(){
+                    intercept.count_ids.insert(executor.id(),$crate::plugin::PageRequest::new(page_request.page_no(), page_request.page_size()));
+                 }
+                 let total_value = $fn_name(executor, true, page_request.offset(), page_request.page_size(), $(&$param_key,)*).await?;
+                 total = $crate::decode(total_value).unwrap_or(0);
+              }
+              if let Some(intercept) = executor.rb_ref().get_intercept::<$crate::plugin::intercept_page::PageIntercept>(){
+                 intercept.select_ids.insert(executor.id(),$crate::plugin::PageRequest::new(page_request.page_no(), page_request.page_size()));
+              }
+              let mut page = $crate::plugin::Page::<$table>::new(page_request.page_no(), page_request.page_size(), total,vec![]);
+              let records_value = $fn_name(executor, false, page_request.offset(), page_request.page_size(), $(&$param_key,)*).await?;
+              page.records = rbs::from_value(records_value)?;
+              Ok(page)
          }
     }
 }
@@ -673,15 +640,9 @@ macro_rules! pysql_select_page {
 #[macro_export]
 macro_rules! raw_sql {
     ($fn_name:ident($($param_key:ident:$param_type:ty$(,)?)*) -> $return_type:ty => $sql_file:expr) => {
+       #[$crate::sql($sql_file)]
        pub async fn $fn_name($($param_key: $param_type,)*) -> $return_type{
-           pub struct Inner{};
-           impl Inner{
-               #[$crate::sql($sql_file)]
-               pub async fn $fn_name($($param_key: $param_type,)*) -> $return_type{
-                 impled!()
-               }
-           }
-           Inner::$fn_name($($param_key,)*).await
+           impled!()
        }
     }
 }
@@ -707,15 +668,9 @@ macro_rules! raw_sql {
 #[macro_export]
 macro_rules! pysql {
     ($fn_name:ident($($param_key:ident:$param_type:ty$(,)?)*) -> $return_type:ty => $py_file:expr) => {
+       #[$crate::py_sql($py_file)]
        pub async fn $fn_name($($param_key: $param_type,)*) -> $return_type{
-           pub struct Inner{};
-           impl Inner{
-               #[$crate::py_sql($py_file)]
-               pub async fn $fn_name($($param_key: $param_type,)*) -> $return_type{
-                 impled!()
-               }
-           }
-           Inner::$fn_name($($param_key,)*).await
+          impled!()
        }
     }
 }
@@ -755,18 +710,9 @@ macro_rules! pysql {
 #[macro_export]
 macro_rules! htmlsql {
     ($fn_name:ident($($param_key:ident:$param_type:ty$(,)?)*) -> $return_type:ty => $html_file:expr) => {
+        #[$crate::html_sql($html_file)]
         pub async fn $fn_name($($param_key: $param_type,)*) -> $return_type{
-            pub struct Inner{};
-            impl Inner{
-             pub async fn fn_name($($param_key: $param_type,)*) -> $return_type{
-                #[$crate::html_sql($html_file)]
-                pub async fn $fn_name($($param_key: $param_type,)*) -> $return_type{
-                  impled!()
-                }
-                $fn_name($($param_key,)*).await
-             }
-           }
-           Inner::fn_name($($param_key,)*).await
+              impled!()
         }
     }
 }

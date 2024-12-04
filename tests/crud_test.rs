@@ -15,7 +15,9 @@ mod test {
     use futures_core::future::BoxFuture;
     use rbatis::executor::{Executor, RBatisConnExecutor};
     use rbatis::intercept::{Intercept, ResultType};
+    use rbatis::intercept_page::PageIntercept;
     use rbatis::plugin::PageRequest;
+    use rbatis::{impl_delete, impl_select, impl_select_page, impl_update};
     use rbatis::{DefaultPool, Error, RBatis};
     use rbdc::datetime::DateTime;
     use rbdc::db::{ConnectOptions, Connection, Driver, ExecResult, MetaData, Row};
@@ -30,7 +32,6 @@ mod test {
     use std::str::FromStr;
     use std::sync::atomic::{AtomicI32, Ordering};
     use std::sync::Arc;
-    use rbatis::{impl_delete, impl_select, impl_select_page, impl_update};
 
     #[derive(Debug)]
     pub struct MockIntercept {
@@ -73,7 +74,7 @@ mod test {
         fn connect_opt<'a>(
             &'a self,
             _option: &'a dyn ConnectOptions,
-        ) -> BoxFuture<Result<Box<dyn Connection>, Error>> {
+        ) -> BoxFuture<'a, Result<Box<dyn Connection>, Error>> {
             Box::pin(async { Ok(Box::new(MockConnection {}) as Box<dyn Connection>) })
         }
 
@@ -359,7 +360,7 @@ mod test {
             };
             let r = MockTable::insert(&mut rb, &t).await.unwrap();
             let (sql, args) = queue.pop().unwrap();
-            println!("{} [{}]", sql,Value::from(args.clone()));
+            println!("{} [{}]", sql, Value::from(args.clone()));
             assert_eq!(sql, "insert into mock_table (id,name,pc_link,h5_link,status,remark,create_time,version,delete_flag,count) VALUES (?,?,?,?,?,?,?,?,?,?)");
             assert_eq!(
                 args,
@@ -408,7 +409,7 @@ mod test {
             let ts = vec![t, t2];
             let r = MockTable::insert_batch(&mut rb, &ts, 10).await.unwrap();
             let (sql, args) = queue.pop().unwrap();
-            println!("{} [{}]", sql,Value::from(args.clone()));
+            println!("{} [{}]", sql, Value::from(args.clone()));
             assert_eq!(sql, "insert into mock_table (id,name,pc_link,h5_link,status,remark,create_time,version,delete_flag,count) VALUES (?,?,?,?,?,?,?,?,?,?),(?,?,?,?,?,?,?,?,?,?)");
             assert_eq!(
                 args,
@@ -916,7 +917,10 @@ mod test {
         let f = async move {
             let mut rb = RBatis::new();
             let queue = Arc::new(SyncVec::new());
-            rb.set_intercepts(vec![Arc::new(MockIntercept::new(queue.clone()))]);
+            rb.set_intercepts(vec![
+                Arc::new(PageIntercept::new()),
+                Arc::new(MockIntercept::new(queue.clone())),
+            ]);
             rb.init(MockDriver {}, "test").unwrap();
             let r = MockTable::select_page(&mut rb, &PageRequest::new(1, 10), "1")
                 .await
@@ -924,7 +928,7 @@ mod test {
             let (sql, args) = queue.pop().unwrap();
             assert_eq!(
                 sql,
-                "select * from mock_table order by create_time desc limit 0,10"
+                "select * from mock_table order by create_time desc limit 0,10 "
             );
             let (sql, args) = queue.pop().unwrap();
             assert_eq!(
@@ -944,14 +948,17 @@ mod test {
         let f = async move {
             let mut rb = RBatis::new();
             let queue = Arc::new(SyncVec::new());
-            rb.set_intercepts(vec![Arc::new(MockIntercept::new(queue.clone()))]);
+            rb.set_intercepts(vec![
+                Arc::new(PageIntercept::new()),
+                Arc::new(MockIntercept::new(queue.clone())),
+            ]);
             rb.init(MockDriver {}, "test").unwrap();
             let r = MockTable::select_page_by_name(&mut rb, &PageRequest::new(1, 10), "", "")
                 .await
                 .unwrap();
             let (sql, args) = queue.pop().unwrap();
             println!("{}", sql);
-            assert_eq!(sql, "select * from mock_table where name != '' limit 0,10");
+            assert_eq!(sql, "select * from mock_table where name != '' limit 0,10 ");
             let (sql, args) = queue.pop().unwrap();
             println!("{}", sql);
             assert_eq!(
@@ -1127,7 +1134,10 @@ mod test {
         let f = async move {
             let mut rb = RBatis::new();
             let queue = Arc::new(SyncVec::new());
-            rb.set_intercepts(vec![Arc::new(MockIntercept::new(queue.clone()))]);
+            rb.set_intercepts(vec![
+                Arc::new(PageIntercept::new()),
+                Arc::new(MockIntercept::new(queue.clone())),
+            ]);
             rb.init(MockDriver {}, "test").unwrap();
             let r = htmlsql_select_page_by_name(&mut rb, &PageRequest::new(1, 10), "")
                 .await
@@ -1137,7 +1147,7 @@ mod test {
             assert_eq!(sql, "select * from table limit 0,10");
             let (sql, args) = queue.pop().unwrap();
             println!("{}", sql);
-            assert_eq!(sql, "select count(1) from table");
+            assert_eq!(sql, "select count(1) as count from table");
         };
         block_on(f);
     }
@@ -1162,7 +1172,10 @@ mod test {
         let f = async move {
             let mut rb = RBatis::new();
             let queue = Arc::new(SyncVec::new());
-            rb.set_intercepts(vec![Arc::new(MockIntercept::new(queue.clone()))]);
+            rb.set_intercepts(vec![
+                Arc::new(PageIntercept::new()),
+                Arc::new(MockIntercept::new(queue.clone())),
+            ]);
             rb.init(MockDriver {}, "test").unwrap();
             let r = pysql_select_page(
                 &mut rb,
@@ -1178,13 +1191,13 @@ mod test {
             println!("{}", sql);
             assert_eq!(
                 sql,
-                "select  * from activity where delete_flag = 0 and var1 = ? and name=?"
+                "select  * from activity where delete_flag = 0 and var1 = ? and name=? limit 0,10 "
             );
             let (sql, args) = queue.pop().unwrap();
             println!("{}", sql);
             assert_eq!(
                 sql,
-                "select  count(1) as count from activity where delete_flag = 0 and var1 = ? and name=?"
+                "select count(1) as count from activity where delete_flag = 0 and var1 = ? and name=?"
             );
         };
         block_on(f);

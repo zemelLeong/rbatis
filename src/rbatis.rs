@@ -1,7 +1,7 @@
 use crate::executor::{Executor, RBatisConnExecutor, RBatisTxExecutor};
 use crate::intercept_log::LogInterceptor;
 use crate::plugin::intercept::Intercept;
-use crate::snowflake::{Snowflake};
+use crate::snowflake::Snowflake;
 use crate::table_sync::{sync, ColumnMapper};
 use crate::{DefaultPool, Error};
 use dark_std::sync::SyncVec;
@@ -14,6 +14,7 @@ use std::fmt::Debug;
 use std::ops::Deref;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+use crate::plugin::intercept_page::PageIntercept;
 
 /// RBatis engine
 #[derive(Clone, Debug)]
@@ -42,8 +43,8 @@ impl RBatis {
     pub fn new() -> Self {
         let rb = RBatis::default();
         //default use LogInterceptor
-        rb.intercepts
-            .push(Arc::new(LogInterceptor::new(LevelFilter::Info)));
+        rb.intercepts.push(Arc::new(PageIntercept::new()));
+        rb.intercepts.push(Arc::new(LogInterceptor::new(LevelFilter::Debug)));
         rb
     }
 
@@ -72,7 +73,10 @@ impl RBatis {
         }
         let mut option = driver.default_option();
         option.set_uri(url)?;
-        let pool = DefaultPool::new(ConnManager::new_arc(Arc::new(Box::new(driver)), Arc::new(option)))?;
+        let pool = DefaultPool::new(ConnManager::new_arc(
+            Arc::new(Box::new(driver)),
+            Arc::new(option),
+        ))?;
         self.pool
             .set(Box::new(pool))
             .map_err(|_e| Error::from("pool set fail!"))?;
@@ -99,7 +103,10 @@ impl RBatis {
         driver: Driver,
         option: ConnectOptions,
     ) -> Result<(), Error> {
-        let pool = Pool::new(ConnManager::new_arc(Arc::new(Box::new(driver)), Arc::new(Box::new(option))))?;
+        let pool = Pool::new(ConnManager::new_arc(
+            Arc::new(Box::new(driver)),
+            Arc::new(Box::new(option)),
+        ))?;
         self.pool
             .set(Box::new(pool))
             .map_err(|_e| Error::from("pool set fail!"))?;
@@ -125,7 +132,9 @@ impl RBatis {
         self.init_option::<Driver, ConnectOptions, DefaultPool>(driver, options)
     }
 
-    /// set_intercepts for many
+    /// set_intercepts for many.
+    /// notice:
+    /// do not forget add PageIntercept!
     pub fn set_intercepts(&mut self, arg: Vec<Arc<dyn Intercept>>) {
         self.intercepts = Arc::new(SyncVec::from(arg));
     }
@@ -160,7 +169,11 @@ impl RBatis {
     pub async fn acquire(&self) -> Result<RBatisConnExecutor, Error> {
         let pool = self.get_pool()?;
         let conn = pool.get().await?;
-        Ok(RBatisConnExecutor::new(self.task_id_generator.generate(), conn, self.clone()))
+        Ok(RBatisConnExecutor::new(
+            self.task_id_generator.generate(),
+            conn,
+            self.clone(),
+        ))
     }
 
     /// try get an DataBase Connection used for the next step
@@ -172,7 +185,11 @@ impl RBatis {
     pub async fn try_acquire_timeout(&self, d: Duration) -> Result<RBatisConnExecutor, Error> {
         let pool = self.get_pool()?;
         let conn = pool.get_timeout(d).await?;
-        Ok(RBatisConnExecutor::new(self.task_id_generator.generate(), conn, self.clone()))
+        Ok(RBatisConnExecutor::new(
+            self.task_id_generator.generate(),
+            conn,
+            self.clone(),
+        ))
     }
 
     /// get an DataBase Connection,and call begin method,used for the next step

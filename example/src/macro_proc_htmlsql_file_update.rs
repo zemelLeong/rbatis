@@ -1,11 +1,12 @@
 use log::LevelFilter;
 use rbatis::dark_std::defer;
-use rbatis::plugin::PageRequest;
+use serde_json::json;
+
+use rbatis::executor::Executor;
 use rbatis::rbdc::datetime::DateTime;
 use rbatis::table_sync::SqliteTableMapper;
-use rbatis::RBatis;
-use serde_json::json;
-use rbatis::htmlsql_select_page;
+use rbatis::{html_sql, RBatis};
+use rbatis::rbdc::db::ExecResult;
 
 /// table
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -24,7 +25,13 @@ pub struct Activity {
     pub delete_flag: Option<i32>,
 }
 
-htmlsql_select_page!(select_page_data(name: &str, dt: &DateTime) -> Activity => "example.html");
+#[html_sql("example.html")]
+pub async fn update_by_id(
+    rb: &dyn Executor,
+    arg: &Activity,
+) -> rbatis::Result<ExecResult> {
+    impled!()
+}
 
 #[tokio::main]
 pub async fn main() {
@@ -41,8 +48,8 @@ pub async fn main() {
     // ------------choose database driver------------
     // rb.init(rbdc_mysql::driver::MysqlDriver {}, "mysql://root:123456@localhost:3306/test").unwrap();
     // rb.init(rbdc_pg::driver::PgDriver {}, "postgres://postgres:123456@localhost:5432/postgres").unwrap();
-    rb.init(rbdc_mssql::driver::MssqlDriver {}, "mssql://jdbc:sqlserver://localhost:1433;User=SA;Password={TestPass!123456};Database=master;").unwrap();
-    //rb.init(rbdc_sqlite::driver::SqliteDriver {}, "sqlite://target/sqlite.db").unwrap();
+    // rb.init(rbdc_mssql::driver::MssqlDriver {}, "mssql://jdbc:sqlserver://localhost:1433;User=SA;Password={TestPass!123456};Database=master;").unwrap();
+    rb.init(rbdc_sqlite::driver::SqliteDriver {}, "sqlite://target/sqlite.db").unwrap();
     // table sync done
     fast_log::logger().set_level(LevelFilter::Off);
     _ = RBatis::sync(
@@ -67,12 +74,20 @@ pub async fn main() {
         .await;
     fast_log::logger().set_level(LevelFilter::Debug);
 
-    let a = select_page_data(
-        &rb.clone(),
-        &PageRequest::new(1, 10),
-        "test",
-        &DateTime::now(),
-    )
+    let a = update_by_id(&rb, &Activity{
+        id: Some("1".into()),
+        name: Some("1".into()),
+        pc_link: Some("1".into()),
+        h5_link: Some("1".into()),
+        pc_banner_img: None,
+        h5_banner_img: None,
+        sort: Some("1".to_string()),
+        status: Some(1),
+        remark: Some("1".into()),
+        create_time: Some(DateTime::now()),
+        version: Some(1),
+        delete_flag: Some(1),
+    })
         .await
         .unwrap();
     println!("{}", json!(a));

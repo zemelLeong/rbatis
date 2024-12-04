@@ -9,18 +9,26 @@ use rbdc::db::{Connection, ExecResult};
 use rbdc::rt::tokio::sync::Mutex;
 use rbs::Value;
 use serde::de::DeserializeOwned;
+use std::any::Any;
 use std::fmt::{Debug, Formatter};
 
 /// the rbatis's Executor. this trait impl with structs = RBatis,RBatisConnExecutor,RBatisTxExecutor,RBatisTxExecutorGuard
 pub trait Executor: RBatisRef + Send + Sync {
+    fn id(&self) -> i64;
     fn name(&self) -> &str {
         std::any::type_name::<Self>()
     }
     fn exec(&self, sql: &str, args: Vec<Value>) -> BoxFuture<'_, Result<ExecResult, Error>>;
     fn query(&self, sql: &str, args: Vec<Value>) -> BoxFuture<'_, Result<Value, Error>>;
+    fn as_any(&self) -> &dyn Any
+    where
+        Self: Sized,
+    {
+        self
+    }
 }
 
-pub trait RBatisRef: Send + Sync {
+pub trait RBatisRef: Any + Send + Sync {
     fn rb_ref(&self) -> &RBatis;
 
     fn driver_type(&self) -> crate::Result<&str> {
@@ -80,6 +88,10 @@ impl RBatisConnExecutor {
 }
 
 impl Executor for RBatisConnExecutor {
+    fn id(&self) -> i64 {
+        self.id
+    }
+
     fn exec(&self, sql: &str, mut args: Vec<Value>) -> BoxFuture<'_, Result<ExecResult, Error>> {
         let mut sql = sql.to_string();
         Box::pin(async move {
@@ -277,6 +289,10 @@ impl<'a> RBatisTxExecutor {
 }
 
 impl Executor for RBatisTxExecutor {
+    fn id(&self) -> i64 {
+        self.tx_id
+    }
+
     fn exec(&self, sql: &str, mut args: Vec<Value>) -> BoxFuture<'_, Result<ExecResult, Error>> {
         let mut sql = sql.to_string();
         Box::pin(async move {
@@ -489,6 +505,13 @@ impl RBatisRef for RBatisTxExecutorGuard {
 }
 
 impl Executor for RBatisTxExecutorGuard {
+    fn id(&self) -> i64 {
+        match &self.tx {
+            None => -1,
+            Some(v) => v.id(),
+        }
+    }
+
     fn exec(&self, sql: &str, args: Vec<Value>) -> BoxFuture<'_, Result<ExecResult, Error>> {
         let sql = sql.to_string();
         Box::pin(async move {
@@ -536,6 +559,10 @@ impl RBatis {
 }
 
 impl Executor for RBatis {
+    fn id(&self) -> i64 {
+        0
+    }
+
     fn exec(&self, sql: &str, args: Vec<Value>) -> BoxFuture<'_, Result<ExecResult, Error>> {
         let sql = sql.to_string();
         Box::pin(async move {
@@ -553,11 +580,11 @@ impl Executor for RBatis {
     }
 }
 
-impl RBatisRef for &RBatis {
-    fn rb_ref(&self) -> &RBatis {
-        self
-    }
-}
+// impl RBatisRef for &RBatis {
+//     fn rb_ref(&self) -> &RBatis {
+//         self
+//     }
+// }
 
 #[derive(Debug)]
 pub struct TempExecutor<'a> {
@@ -600,13 +627,17 @@ impl<'a> TempExecutor<'a> {
     }
 }
 
-impl RBatisRef for TempExecutor<'_> {
+impl RBatisRef for TempExecutor<'static> {
     fn rb_ref(&self) -> &RBatis {
         self.rb
     }
 }
 
-impl Executor for TempExecutor<'_> {
+impl Executor for TempExecutor<'static> {
+    fn id(&self) -> i64 {
+        0
+    }
+
     fn exec(&self, sql: &str, args: Vec<Value>) -> BoxFuture<'_, Result<ExecResult, Error>> {
         self.sql.push(sql.to_string());
         self.args.push(args);
