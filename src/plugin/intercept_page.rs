@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 /// make count sql remove `limit`
 /// make select sql append limit ${page_no},${page_size}
+/// notice: the sql must be starts with 'select '
 /// how to use?
 /// ```rust
 ///
@@ -59,43 +60,38 @@ impl Intercept for PageIntercept {
         }
         if self.count_ids.contains_key(&executor.id()) {
             self.count_ids.remove(&executor.id());
-            if !(sql.contains("select ") && sql.contains(" from ")) {
-                return Err(Error::from(
-                    "InterceptPageExecutor sql must have select and from ",
-                ));
-            }
-            let start = sql.find("select ").unwrap_or(0) + "select ".len();
-            let end = sql.find(" from ").unwrap_or(0);
-            let v = &sql[start..end];
-            *sql = sql.replace(v, "count(1) as count").to_string();
-            if let Some(idx) = sql.rfind(" limit ") {
-                *sql = (&sql[..idx]).to_string();
+            if sql.trim_start().starts_with("select ") && sql.contains(" from ") {
+                let start = sql.find("select ").unwrap_or(0) + "select ".len();
+                let end = sql.find(" from ").unwrap_or(0);
+                let v = &sql[start..end];
+                *sql = sql.replace(v, "count(1) as count").to_string();
+                if let Some(idx) = sql.rfind(" limit ") {
+                    *sql = (&sql[..idx]).to_string();
+                }
             }
         }
         if self.select_ids.contains_key(&executor.id()) {
             let req = self.select_ids.remove(&executor.id());
-            if !(sql.contains("select ") && sql.contains(" from ")) {
-                return Err(Error::from(
-                    "InterceptPageExecutor sql must have select and from ",
-                ));
-            }
-            let driver_type = executor.driver_type().unwrap_or_default();
-            let mut templete = " limit ${page_no},${page_size} ".to_string();
-            if driver_type == "pg" || driver_type == "postgres" {
-                //postgres use `limit x offset x`
-                templete = " limit ${page_size} offset ${page_no}".to_string();
-            } else if driver_type == "mssql" {
-                //mssql must have `order by`, if you not add on sql.we will add this
-                if !sql.contains(" order by ") {
-                    sql.push_str(" order by id desc ");
+            if sql.trim_start().starts_with("select ") && sql.contains(" from ") {
+                let driver_type = executor.driver_type().unwrap_or_default();
+                let mut templete = " limit ${page_no},${page_size} ".to_string();
+                if driver_type == "pg" || driver_type == "postgres" {
+                    //postgres use `limit x offset x`
+                    templete = " limit ${page_size} offset ${page_no}".to_string();
+                } else if driver_type == "mssql" {
+                    //mssql must have `order by`, if you not add on sql.we will add this
+                    if !sql.contains(" order by ") {
+                        sql.push_str(" order by id desc ");
+                    }
+                    templete =
+                        " offset ${page_no} rows fetch next ${page_size} rows only ".to_string();
                 }
-                templete = " offset ${page_no} rows fetch next ${page_size} rows only ".to_string();
-            }
-            if !sql.contains("limit") {
-                if let Some(req) = req {
-                    templete = templete.replace("${page_no}", &req.offset().to_string());
-                    templete = templete.replace("${page_size}", &req.page_size().to_string());
-                    sql.push_str(&templete);
+                if !sql.contains(" limit ") {
+                    if let Some(req) = req {
+                        templete = templete.replace("${page_no}", &req.offset().to_string());
+                        templete = templete.replace("${page_size}", &req.page_size().to_string());
+                        sql.push_str(&templete);
+                    }
                 }
             }
         }
